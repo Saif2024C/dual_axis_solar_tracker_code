@@ -1,97 +1,116 @@
 /*
-Code : Mohammad Saifullah 
+Code : Raghav Sharma, Mohammad Saifullah 
 Title : Dual Axis Solar Tracking
-V0 = 6/12/23
+Date : 11 December 2023 (final)
 */
 
 #include <Servo.h>
-Servo horizontal; // horizontal servo
-Servo vertical; // vertical servo 
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 
-int VerticalPos=90;
-int HorizontalPos=90;
-int servoDefault = 90 ;  // default angle for both the servo motors 
-int tol = 60; // tol=tolerance 
+// Four LDRs
+#define topLeft A0
+#define topRight A1
+#define bottomLeft A2
+#define bottomRight A3
 
+// OLED Screen Parameters
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
 
-int TL = A0; //LDR TOP LEFT 
-int TR = A1; //LDR TOP RIGHT
-int BL = A2; //LDR BOTTOM LEFT
-int BR = A3; //LDR BOTTOM RIGHT
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-void setup()
-{
-Serial.begin(9600);
-horizontal.attach(9);
-vertical.attach(8);
-horizontal.write(servoDefault);
-vertical.write(servoDefault);
+int avgTop, avgBottom, avgLeft, avgRight, altitudeError, azimuthError, altitude, azimuth, altitudeNew, azimuthNew;
+
+// ADC error tolerance
+int tol = 45;
+
+// Angle step for Servo rotation
+int step = 3, altitudeStep, azimuthStep;
+
+// Timekeeping
+unsigned long elapsed;
+
+// Two Servos: altitude (up-down) & azimuth (left-right)
+Servo altitudeMotor, azimuthMotor;
+
+void setup() {
+  Serial.begin(9600);
+
+  // Tracking angles (Servos go between 0 and 180 degrees)
+  altitude = 90, azimuth = 90;
+
+  // Initialize Servos
+  altitudeMotor.attach(9);
+  azimuthMotor.attach(10);
+  altitudeMotor.write(altitude);
+  azimuthMotor.write(azimuth);
+
+  // Turn on screen
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("Display allocation failed"));
+  }
+  delay(2000);
+  display.setTextColor(WHITE);
+
 }
 
 void loop() {
-
-int TopLeft = analogRead(TL); // top left
-int TopRight = analogRead(TR); // top right
-int BottomLeft = analogRead(BL); // down left
-int BottomRight = analogRead(BR); // down right
-
-int avtop = (TopLeft+TopRight)*0.5; // average value top
-int avddown = (BottomLeft + BottomRight)*0.5; // average value down
-int avgleft = (TopLeft + BottomRight)*0.5; // average value left
-int avgright = (TopRight + BottomRight)*0.5; // average value right
-
-int VDiff = avtop - avddown; // check the diffirence of up and down
-int HDiff = avgleft - avgright;// check the diffirence of left and right
-
-
-if (abs(VDiff)>tol) // check if the Vertical diffirence is in the tolerance else change Vertical angle
-{
+  // elapsed = millis();
   
-  VerticalPos = VerticalPos - round(VDiff/abs(VDiff))  ;
-  if(0 < VerticalPos && VerticalPos < 180)
-  {
-    vertical.write(VerticalPos);
+  // Read LDR values
+  avgTop = round(0.5*(analogRead(topLeft)+analogRead(topRight)));
+  avgBottom = round(0.5*(analogRead(bottomLeft)+analogRead(bottomRight)));
+  avgLeft = round(0.5*(analogRead(topLeft)+analogRead(bottomLeft)));
+  avgRight = round(0.5*(analogRead(topRight)+analogRead(bottomRight)));
+
+  // Required corrections (maximize ADC values for maximum luminosity; bring erros close to 0)
+  altitudeError = avgTop - avgBottom;
+  azimuthError = avgLeft - avgRight;
+
+  // Correct Altitude (Up-Down)
+  if (abs(altitudeError) > tol) {
+    altitudeStep = int(round(altitudeError/abs(altitudeError)) * step);
+    altitudeNew = altitude + altitudeStep;
+    
+    if ((altitudeNew>20) && (altitudeNew<160)) {
+      altitude = altitudeNew;
+      altitudeMotor.write(altitude);
+    }
   }
 
-  else if( VerticalPos > 180)
-  {
-    VerticalPos = 180;
-    vertical.write(VerticalPos);
+  // Correct Azimuth (Left-Right)
+  if (abs(azimuthError) > tol) {
+    azimuthStep = -int(round(azimuthError/abs(azimuthError)) * step);
+    azimuthNew = azimuth + azimuthStep;
+
+    if ((azimuthNew>20) && (azimuthNew<160)) {
+      azimuth = azimuthNew;
+      azimuthMotor.write(azimuth);
+    }
   }
 
-  else
-  {
-    VerticalPos = 0;
-    vertical.write(VerticalPos);
-  }
-delay(50);
-}
+  // Display Solar Panel Voltage
+  float solar_voltage = 2 * analogRead(A7) * 5 / 1024.0;
+  solar_voltage = int(solar_voltage*10)/10.0;
 
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(7,5);
+  display.println("Solar Panel Voltage");
+  display.setTextSize(3);
+  display.setCursor(12, 29);
+  display.print(solar_voltage);
+  display.println(" V");
+  display.display();
 
-if (abs(HDiff)>tol) // check if the Horizontal diffirence is in the tolerance else change horizontal angle
-{
-  HorizontalPos = HorizontalPos - round(HDiff/abs(HDiff)) ;
+  /*
+  elapsed = millis() - elapsed;
+  Serial.print("Elapsed Time (ms):");
+  Serial.println(elapsed);
+  */
 
-  if( 0 < HorizontalPos && HorizontalPos < 180 )
-  {
-    horizontal.write(HorizontalPos);
-  }
-
- else if( VerticalPos > 180)
-  {
-    VerticalPos = 180;
-    vertical.write(VerticalPos);
-  }
-
-  else
-  {
-    VerticalPos = 0;
-    vertical.write(VerticalPos);
-  }
-  delay(50);
-
-}
-
-delay(20);
-
+  delay(10);
+  // ~40 ms elapsed each loop (excluding final delay statement)
 }
